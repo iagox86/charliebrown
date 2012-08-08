@@ -1,0 +1,321 @@
++---------------------------------------------------------+
+|    The Nightmare Before Charlie Brown's Christmas       |
++---------------------------------------------------------+
+Submission by:
+- Ron Bowes
+- Mak Kolybabi
+- Andrew Orr
+- Russ Tait Milne
+of SkullSpace Winnipeg (http://skullspace.ca)
+
+
++----------------------------------------------------------------------------+
+| 1) What was the purpose of Jack's commands shown above?                    |
++----------------------------------------------------------------------------+
+* dhclient
+  Jack used dhclient to obtain an ip address from the network. Interestingly,
+  the DHCP offer and acknowledgements are seen at 1:44:50 UTC, but the
+  request, which should have been broadcast at approximately the same time,
+  isn't present. One second after receiving the DHCP address, the router at
+  10.10.10.1 sends a single ping to Jack's newly obtained address, which he
+  responds to. That's also unusual behaviour.
+
+* ifconfig
+  Jack runs ifconfig for one of two reasons:
+  1) To determine the subnet mask for the network he connected to. Since Jack
+     knows that the main VoIP server is somewhere on the same subnet as he
+     plugged into, thanks to the contract he found, he might want to find the
+     subnet mask to determine exactly which hosts to scan. In this case, since
+     the subnet mask is 255.255.255.0, he'll scan the full class c address
+     space.
+  2) Jack may also run ifconfig to check what his MAC address is
+     (00:50:56:10:10:55). If this is the case, then it's the first evidence
+     we have that Jack is planning on performing an ARP poisoning attack.
+
+* msfconsole
+  Run Metasploit console.
+
+* use auxiliary/scanner/sip/options
+  Use the auxiliary module called "scanner/sip/options", which will attempt
+  connections to all hosts on port 5060 with an OPTIONS request.
+
+* set RHOSTS 10.10.10.1-254
+  Jack wants to scan the subnet that he's connected to, since he knows that's
+  where the VoIP server is located.
+
+* run
+  Run the SIP scan. He discovers that one server, 10.10.10.77, is running
+  SIP, and that it's Asterisk PBX 1.6.2.11.
+
+* use auxiliary/scanner/sip/enumerator
+  Next, use the auxiliary module scanner/sip/enumerator, which scans a SIP
+  server for numeric username/extensions using OPTIONS/REGISTER commands.
+
+* set RHOSTS 10.10.10.77
+  Jack now knows exactly which server he's attacking
+
+* set MINEXT 1000
+* set MAXEXT 1100
+  Jack is only interested in common extensions - 1000 to 1100. This may be a
+  guess on his part, or be based on a range implied by something written or
+  displayed on Lucy's phone.
+
+* run
+  Perform the enumeration. Based on the server's logs, this happens at
+  1:45:10 UTC and takes less than a second.
+
+* exit
+  Leave Metasploit console.
+
+
++----------------------------------------------------------------------------+
+| 2) What was Jack's big plan?                                               |
++----------------------------------------------------------------------------+
+From a high level, Jack discovered that Charlie Brown and the gang were
+missing the point of Christmas - senseless commercialism. So, being the good
+guy that he is, he decided to help them realize that they weren't acting like
+good Americans, and therefore were helping the terrorists.
+
+To do this, he needed to do two things:
+1) To send a message to Lucy, pretending to be their ruler, Charlie Brown,
+   telling her what Christmas was really about.
+2) Ensure that Charlie Brown didn't show up and ruin the charade.
+
+To make this happen, Jack had to take a number of actions:
+* Find the SIP server, which he uses Metasploit for.
+* Bruteforce an account on the SIP server (he gained access to 1005 at
+  approximately 1:46:16 UTC, according to the server logs).
+* Use ARP spoofing to monitor RTP traffic on the switched network until Lucy
+  calls Charlie Brown (the ARP spoofing starts at 1:46:35 UTC, the call
+  happens at 1:47:19 UTC).
+* After the call is established, monitor it until just the right time, then
+  inject a message to Charlie Brown telling him to stay home because nobody
+  likes him (the injection happened at 1:48:05 UTC). It's odd that he didn't
+  inject a message to Lucy at the same time, but that may indicate a
+  limitation of the tool that Jack's using.
+* Wait until Lucy tries to call Charlie again, and redirect her to the
+  extension that Jack has previously gained access to (she calls Charlie back
+  at 1:49:08 UTC).
+
+
++----------------------------------------------------------------------------+
+| 3) What tools and techniques could Jack have used to implement the whole   |
+|    attack, particularly the ability to listen to conversations in real     |
+|    time, and to inject his message with precision? Please be specific and  |
+|    chronological.                                                          |
++----------------------------------------------------------------------------+
+Obviously, he used Metasploit to find the VoIP server, and we already know
+the commands he used for that. The other tools he may have used are:
+
+* SIP Bruteforcing
+  It is difficult to determine which tool was used for SIP bruteforcing,
+  since we have only logs and not packet captures from the Asterisk server.
+  However, the most obvious tool for any bruteforcing is thc-hydra.
+
+  Each account had 106 guesses performed against it. Since thc-hydra can try
+  the blank password and the username as the password first, that means that
+  the dictionary contains either 104, 105, or 106 passwords. Since no
+  dictionary I've ever seen is that small, and Jack was likely in a hurry, it
+  is likely that he generated his own dictionary that's a subset of a larger
+  one.
+
+  There are two likely dictionaries that Jack may have used to generate his
+  list:
+  * Metasploit's "data/wordlists/unix_passwords.txt" list, since we know
+    that Metasploit was installed and handy.
+  * John the Ripper's password.lst, since most security folks have john
+    installed and it's probably the best list.
+
+  The password for 1005 was guessed on the 20th try, according to the log. That
+  means that the 18th, 19th, or 20th password in the list was the key. That
+  gives us:
+  * Metasploit: ashley, qwerty, 111111
+  * John: summer, internet, service
+
+  Since 111111 makes sense for a password on a phone, my guess would be that
+  Jack used hydra with the following command:
+  $ seq 1000 1005 > ./usernames.txt
+  $ head -n106 /pentest/exploit/framework3/data/wordlists/unix_passwords.txt \
+    > ./passwords.txt
+  $ hydra -L ./usernames.txt -P ./passwords.txt -f -v 10.10.10.77 sip
+
+  That series of commands would generate the exact traffic that we see -
+  guessing usernames between 1000 and 1005, performing 106 guesses per host,
+  and stopping after the first valid combination is found (1005:111111).
+
+* ARP poisoning
+  At 1:46:35, an ARP poisoning attack starts. Every 2 seconds, an unsolicited
+  ARP response is seen. This makes it possible to monitor and inject into
+  VoIP calls.
+
+  There are many tools that can be used for ARP poisoning. The first one that
+  comes to mind is Ettercap, but since that may be backdoored we assume that
+  Jack is smart enough to avoid it. Also, Ettercap's traffic doesn't match
+  what is seen in the packet log.
+
+  The ARP poisoning messages occur every 2 seconds until the end of the packet
+  capture. At 1:25:06 UTC, Jack sends an ARP request for the router's address.
+  A tool that exhibits identical behaviour to this is arpspoof, from the
+  dsniff project. arpspoof would have been run as follows:
+  # arpspoof -t 10.10.10.77 10.10.10.1
+
+* VoIP sniffing
+  At 1:47:19, Lucy, at the Theatre, calls Charlie Brown. Because Jack was
+  able to inject a message at the right moment (well, 10 seconds after the
+  right moment), we can deduce that he was either listening in real time,
+  or very nearly real time. We found several tools that could monitor and
+  replay VoIP calls after the fact, but very few that could play them in
+  real time.
+
+  ucsniff, a tool written by Viper Labs, can monitor SIP/RTP traffic for voice
+  (and video!) in realtime. The commandline we used for this is the following:
+  # ucsniff -G
+
+  which opens up the GUI version. After beginning monitoring, the calls
+  can be monitored in real time.
+
+* VoIP injection
+  At 1:48:05 UTC, Jack injects a message to Charlie Brown. We found a number
+  of tools that could inject pre-recorded messages, but only a couple that
+  actually worked. Since Jack doesn't mention any details of the conversation
+  in his message, it's safe to assume that the message is pre-recorded.
+
+  The best (working) tool we found was RTP InsertSound v3.0, from Hacking VoIP
+  Exposed (David Endler & Mark Collier). It would be run with the following
+  commandline:
+  # rtpinsertsound -b 10.11.11.22 ./messagetocharlie.wav
+
+  This will wait for VoIP traffic going to 10.11.11.22, which we know is
+  Charlie's address. When it detects the traffic, it will ask Jack to press
+  'enter' at the right moment. Jack continues listening to the call and,
+  when the time is right (1:48:05 UTC), he inserts the message.
+
+* VoIP redirection
+  At 1:49:08 UTC, Lucy at the Theatre attempts to call Charlie. Jack responds
+  with 301 Moved Permanently, telling her to call 1005 instead (the number
+  Jack had bruteforced earlier). We found a tool called redirectpoison,
+  from Hacking VoIP Exposed, that performs this attack. The command that Jack
+  would have used is:
+  # redirectpoison <interface> 10.11.11.33 5060 '<sip:1005@10.10.10.77>'
+
+  Which would redirect any calls originating from Lucy at the Theatre
+  (10.11.11.33) to the extension that Jack had cracked, 1005.
+
+* VoIP calling
+  At 1:49:08 UTC, Lucy calls Jack at 1005. Since Jack had previously
+  determined the password for that account, he doesn't need any special tools
+  to take calls. Any VoIP client will do what he needs.
+
+
++----------------------------------------------------------------------------+
+| 4) How could Linus have defended the infrastructure against Jack's         |
+|    tactics?                                                                |
++----------------------------------------------------------------------------+
+* Better passwords
+  It took Jack 20 attempts to bruteforce the password for extension 1005. This
+  indicates that the password was far too simple. Linus should have implemented
+  a password complexity policy, but the fact that it has to interface with the
+  phones might make that unreasonable, and other alternatives might be
+  investigated like two-factor authentication or VPNs.
+
+* Two-factor authentication
+  Having a token with a changing password on it would have made this attack far
+  more difficult for Jack. Of course, with Lucy's track record, she probably
+  would have left her token on the desk, making the attack once again possible,
+  although more difficult, since he would only have been able to use Lucy's
+  account and not 1005.
+
+  Additionally, using certificates for authenticating the phones would have
+  made Jack's password-guessing attack almost impossible.
+
+* Account lockout
+  If accounts were locked out after a certain number of login attempts, and
+  that number was less than 20, Jack would not have been able to bruteforce the
+  login for extension 1005.
+
+* Login delays
+  If there was a delay between login attempts, Jack's attack would have taken
+  longer, giving Linus more time to respond.
+
+* Intrusion Prevention
+  Since Linus has Snort installed on the VoIP server, and the Snort
+  installation detected a likely attack, having Snort actively block the attack
+  would have prevented Jack from performing an obvious password-guessing
+  attack.
+
+* Isolated server
+  A large part of this attack was possible due to Lucy's phone being on the
+  same subnet as the Asterisk server. Even if all of the above changes were
+  made to the password authentication, Jack still could have pulled off the
+  entire attack (although in a somewhat more complicated fashion).
+
+* Protection from ARP spoofing
+  Since Linus knew that putting Lucy's phone on the same network as the VoIP
+  server was a risk, he could have lowered the risk by ensuring that the router
+  had a static ARP entry for the VoIP server.
+
+* 802.1X
+  Requiring devices to authenticate to the switch before opening a port would
+  have prevented Jack from accessing the network at all. This is assuming that
+  Jack could not simply disconnect and reconnect Lucy's phone and record the
+  traffic.
+
+* Secure SIP and SRTP
+  By using encryption on the SIP/RTP traffic, Jack wouldn't have been able to
+  listen in, inject messages, and redirect phonecalls.
+
+* Using SIP clients with REINVITE
+  By using REINVITE, the last SIP call between Lucy (at the Theatre) and
+  Charlie would have happened directly, without being routed through the main
+  SIP server. That would prevent Jack from hijacking it.
+
+
++----------------------------------------------------------------------------+
+| 5) How can Linus set things right?                                         |
++----------------------------------------------------------------------------+
+I'm not 100% sure on what kind of answer is expected on this question, so I'm
+going to have some fun with creative writing. Enjoy!
+
+Thanks to Linus's mistakes, and Jack's ambitions, there are a number of
+problems in Charlie Brown's world that have to be resolved.
+
+First, the children almost missed the school play in order to buy more presents
+and spread commercialism. Although the story doesn't specifically say this
+happens, we know that the children will listen to their ruler, Charlie Brown,
+and do what he says. In normal cartoon fashion, Linus would scramble down to
+the Walmart, find the kids, and bring them back just in time for the play to
+start. The curtain would rise, and nobody would be on stage. The parents would
+be whispering to each other with their usual trombone voices. Then, at the last
+minute, the first child would come on stage and Christmas would be saved!
+
+Second, the children need to get rid of Jack Skellington. The most obvious way
+to do that would be to call upon the Great Pumpkin, who is known to be The Great
+Protector of Charlie Brown's world.
+
+Linus, the one who knows the truth about the Great Pumpkin would have to summon
+him. I'm not sure what the ritual entails, but I suspect it's blood sacrifice.
+There is definitely more to it than waiting in a field.
+
+Anyway, the Great Pumpkin, knowing that the children are in danger, would show
+up and have a climactic fight with Jack Skellington. I'm picturing the battle
+at the end of The Matrix, where the giant pumpkin jumps inside Jack Skellington
+and makes him explode.
+
+And finally, Linus has to resolve the problems caused for Charlie Brown.
+Charlie Brown is known to have low self confidence coupled with high
+self hatred, and the combination of that and Jack Skellington's insult may have
+been enough to push Charlie Brown over the edge.
+
+I imagine Charlie Brown climbing to the top of the highest building in the town
+and standing at the edge. Linus would burst out the door and yell for him to
+STOP! Charlie, sobbing, would go over all the horrible things that have
+happened to him, and Linus would be forced to try and talk him out of doing
+something horrible.
+
+Finally, Charlie would remember Lucy and the football, close his eyes, and
+jump. But, like everything else, Charlie would screw it up and end up landing
+on an awning which, according to the Mythbusters and Indiana Jones, could
+potentially save somebody from falling to their death.
+
+So Charlie Brown would be saved, Skellington would be defeated, and everybody
+would rejoice!
